@@ -1,4 +1,3 @@
-// api/recommend.ts
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import fetch from "node-fetch";
@@ -15,7 +14,6 @@ if (!getApps().length) {
 }
 const db = getFirestore();
 
-// Weather → desired tags
 function weatherTags({ tempC, condition }: { tempC: number; condition: string }) {
   const cond = condition.toLowerCase();
   const tags: string[] = [];
@@ -26,16 +24,19 @@ function weatherTags({ tempC, condition }: { tempC: number; condition: string })
   return tags.length ? tags : ["balanced"];
 }
 
-// Meal detection
-function currentMealKey(date = new Date()) {
-  const h = date.getHours();
-  if (h >= 9 && h < 12) return "breakfast";
-  if (h >= 12 && h < 17) return "lunch";
-  if (h >= 17 && h < 21) return "dinner";
-  return "lunch";
+const DEFAULT_TIME_ZONE = process.env.LOCAL_TIME_ZONE || "America/New_York";
+
+function currentMealKey(timeZone = DEFAULT_TIME_ZONE, date = new Date()) {
+  const h = parseInt(
+    new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone }).format(date),
+    10,
+  );
+  if (h >= 5 && h < 10) return "breakfast";
+  if (h >= 10 && h < 16) return "lunch";
+  if (h >= 16 && h < 22) return "dinner";
+  return "nono";
 }
 
-// Tag menu items
 function tagMenu(items: { name: string; category?: string; labels?: string[] }[]) {
   return items.map((i) => {
     const name = i.name.toLowerCase();
@@ -45,21 +46,19 @@ function tagMenu(items: { name: string; category?: string; labels?: string[] }[]
     if (name.includes("soup")) tags.add("soup");
     if (name.includes("salad")) tags.add("salad");
     if (name.includes("cold brew") || name.includes("iced") || name.includes("smoothie")) tags.add("drink").add("cold");
-    if (name.includes("grill") || name.includes("burger") || name.includes("bbq") || name.includes("fried")) tags.add("comfort");
+    if (name.includes("grill") || name.includes("pasta") || name.includes("bbq") || name.includes("fried")) tags.add("comfort");
     if (cat.includes("beverage")) tags.add("drink");
     labels.forEach((l) => tags.add(l));
     return { ...i, tags: Array.from(tags) };
   });
 }
 
-// Score hall: tag overlap + open bonus + short-wait bonus
 function scoreHall(hall, desiredTags: string[]) {
   const menu = tagMenu(hall.menuItems || []);
   const tagSet = new Set(menu.flatMap((m) => m.tags));
   let score = 0;
   desiredTags.forEach((t) => { if (tagSet.has(t)) score += 2; });
   if (hall.status === "open" || hall.isOpen === true) score += 1;
-  // optional: parse waitTime like "5-10 min" and reward shorter waits
   const waitText = (hall.waitTime || "").toLowerCase();
   const match = waitText.match(/(\d+)/);
   if (match) {
@@ -74,7 +73,52 @@ function scoreHall(hall, desiredTags: string[]) {
   return { score, matchedTags, sampleItems };
 }
 
-// Open-Meteo fetch (set lat/lon to campus)
+function humanReason({
+  weatherCondition,
+  weatherTempC,
+  matchedTags,
+  waitText,
+  distanceText,
+  sampleItems,
+}: {
+  weatherCondition: string;
+  weatherTempC: number | null | undefined;
+  matchedTags: string[];
+  waitText?: string;
+  distanceText?: string | null;
+  sampleItems?: string[];
+}) {
+  const hasSoup = matchedTags.includes("soup");
+  const hasCold = matchedTags.includes("cold") || matchedTags.includes("drink");
+  const hasComfort = matchedTags.includes("comfort");
+  const tempF = typeof weatherTempC === "number" ? Math.round((weatherTempC * 9) / 5 + 32) : null;
+
+  let mood: string;
+  if (weatherCondition.includes("rain") && (hasSoup || hasComfort)) {
+    mood = "some good comfort pick for the rain are";
+  } else if (weatherCondition === "clear" && hasCold) {
+    mood = "some cool option for clear skies are";
+  } else if (hasSoup || hasComfort) {
+    mood = "some comfort-friendly food are";
+  } else if (hasCold) {
+    mood = "some refreshing picks are";
+  } else {
+    mood = "some solid option right now are";
+  }
+
+  const parts: string[] = [];
+  if (tempF !== null) parts.push(`It's ${tempF}°F`);
+  parts.push(mood);
+  if (waitText) parts.push(`short wait (${waitText})`);
+  if (distanceText) parts.push(distanceText);
+
+  let reason = parts.join(", ");
+  if (sampleItems && sampleItems.length) {
+    reason += `: ${sampleItems.slice(0, 2).join(", ")}`;
+  }
+  return reason;
+}
+
 async function fetchWeather(lat = 33.7756, lon = -84.3963) {
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation,weather_code`;
   const resp = await fetch(url);
@@ -85,14 +129,13 @@ async function fetchWeather(lat = 33.7756, lon = -84.3963) {
   const code = data.current?.weather_code ?? 0;
   const condition =
     code === 0 ? "clear" :
-    [1,2,3].includes(code) ? "cloudy" :
-    [45,48].includes(code) ? "fog" :
-    [51,53,55,56,57,61,63,65,66,67].includes(code) ? "rain" :
-    [71,73,75,77,85,86].includes(code) ? "snow" : "cloudy";
+      [1, 2, 3].includes(code) ? "cloudy" :
+        [45, 48].includes(code) ? "fog" :
+          [51, 53, 55, 56, 57, 61, 63, 65, 66, 67].includes(code) ? "rain" :
+            [71, 73, 75, 77, 85, 86].includes(code) ? "snow" : "cloudy";
   return { tempC, precipitation: precip, condition };
 }
 
-// Nutrislice menu fetcher
 async function fetchMenu(slug: string, meal = "lunch") {
   const now = new Date();
   const y = now.getFullYear(), m = now.getMonth() + 1, d = now.getDate();
@@ -100,8 +143,10 @@ async function fetchMenu(slug: string, meal = "lunch") {
   const res = await fetch(url, { headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error(`nutrislice ${res.status}`);
   const data = await res.json();
+
   const items: any[] = [];
-  function parse(arr: any[]) {
+
+  function parseMenuItemsArray(arr: any[]) {
     let station = "Other";
     for (const obj of arr) {
       if (obj?.is_station_header && obj.text) { station = obj.text; continue; }
@@ -116,9 +161,37 @@ async function fetchMenu(slug: string, meal = "lunch") {
       }
     }
   }
-  if (Array.isArray(data?.menu_items)) parse(data.menu_items);
+
+  if (Array.isArray((data as any)?.menu_items)) {
+    parseMenuItemsArray((data as any).menu_items);
+  } else {
+    const bucket: any[] = [];
+    function walk(node: any) {
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+      } else if (node && typeof node === "object") {
+        if (node.name && (node.menu_id || node.menuItemId || node.id || node.food)) {
+          bucket.push({
+            id: String(node.id ?? node.menuItemId ?? node.menu_id ?? Math.random()),
+            name: node.name,
+            category: (node.category ?? node.foodCategory ?? node.station ?? "Other") as string,
+            labels: [],
+          });
+        }
+        Object.values(node).forEach(walk);
+      }
+    }
+    walk(data);
+    const seen = new Set<string>();
+    bucket.forEach((it) => {
+      const key = `${it.id}|${it.name}`;
+      if (!seen.has(key)) { seen.add(key); items.push(it); }
+    });
+  }
+
   return items;
 }
+
 
 export default async function handler(req, res) {
   if (req.headers["x-api-key"] !== process.env.API_SECRET) {
@@ -126,7 +199,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const weather = await fetchWeather(); // campus lat/lon above
+    const weather = await fetchWeather();
     const desired = weatherTags(weather);
     const meal = currentMealKey();
 
@@ -135,39 +208,54 @@ export default async function handler(req, res) {
 
     const enriched = [];
     for (const h of halls) {
-      let menuItems: any[] = h.menuItems || [];
-      if ((!menuItems || menuItems.length === 0) && h.nutrisliceSlug) {
-        try { menuItems = await fetchMenu(h.nutrisliceSlug, meal); } catch { menuItems = []; }
+      let menuItems: any[] = [];
+      if (h.nutrisliceSlug) {
+        try {
+          menuItems = await fetchMenu(h.nutrisliceSlug, meal);
+        } catch {
+          menuItems = [];
+        }
       }
       const { score, matchedTags, sampleItems } = scoreHall({ ...h, menuItems }, desired);
       enriched.push({ hallId: h.id, name: h.name, score, matchedTags, sampleItems });
     }
 
+
     let picks = enriched
       .filter((p) => p.score > 0)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 3)
-      .map((p) => ({
-        hallId: p.hallId,
-        name: p.name,
-        score: p.score,
-        reason: `Matches ${p.matchedTags.join(", ") || "general"} for ${weather.condition}`,
-        sampleItems: p.sampleItems,
-      }));
+      .slice(0, 1)
+      .map((p) => {
+        const reason = humanReason({
+          weatherCondition: weather.condition,
+          weatherTempC: weather.tempC,
+          matchedTags: p.matchedTags,
+          waitText: halls.find((h) => h.id === p.hallId)?.waitTime,
+          distanceText: undefined,
+          sampleItems: p.sampleItems,
+        });
+        return {
+          hallId: p.hallId,
+          name: p.name,
+          score: p.score,
+          reason,
+          sampleItems: p.sampleItems,
+        };
+      });
 
-    // Fallback if nothing scored
     if (picks.length === 0) {
       picks = enriched
         .sort((a, b) => b.score - a.score)
-        .slice(0, 3)
+        .slice(0, 1)
         .map((p) => ({
           hallId: p.hallId,
           name: p.name,
           score: p.score,
-          reason: "Top open options right now",
+          reason: "Top open option right now",
           sampleItems: p.sampleItems,
         }));
     }
+
 
     return res.status(200).json({ weather, desiredTags: desired, meal, picks });
   } catch (e) {
