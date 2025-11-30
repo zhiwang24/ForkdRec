@@ -255,6 +255,12 @@ export default async function handler(req, res) {
           sampleItems: p.sampleItems,
         }));
     }
+    await db.collection("recommendations").doc("global").set({
+      updatedAt: Date.now(),
+      weather,
+      meal,
+      pick: picks[0] || null, // single top pick
+    });
 
 
     return res.status(200).json({ weather, desiredTags: desired, meal, picks });
