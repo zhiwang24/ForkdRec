@@ -26,6 +26,25 @@ function weatherTags({ tempC, condition }: { tempC: number; condition: string })
 
 const DEFAULT_TIME_ZONE = process.env.LOCAL_TIME_ZONE || "America/New_York";
 
+function normalizeMenuItems(items: any[]) {
+  return (items || []).map((raw) => {
+    let obj = raw;
+    if (typeof raw === "string") {
+      try {
+        obj = JSON.parse(raw);
+      } catch {
+        obj = { name: raw };
+      }
+    }
+    return {
+      id: String(obj?.id ?? Math.random()),
+      name: String(obj?.name ?? "Item"),
+      category: obj?.category,
+      labels: Array.isArray(obj?.labels) ? obj.labels : [],
+    };
+  });
+}
+
 function currentMealKey(timeZone = DEFAULT_TIME_ZONE, date = new Date()) {
   const h = parseInt(
     new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone }).format(date),
@@ -215,8 +234,13 @@ export default async function handler(req, res) {
         } catch {
           menuItems = [];
         }
+      } else if (Array.isArray(h.menuItems)) {
+        menuItems = normalizeMenuItems(h.menuItems);
       }
-      const { score, matchedTags, sampleItems } = scoreHall({ ...h, menuItems }, desired);
+      const waitTimeText =
+        h.waitTime ??
+        (typeof h.currentWaitMinutes === "number" ? `${h.currentWaitMinutes} min` : undefined);
+      const { score, matchedTags, sampleItems } = scoreHall({ ...h, menuItems, waitTime: waitTimeText }, desired);
       enriched.push({ hallId: h.id, name: h.name, score, matchedTags, sampleItems });
     }
 
