@@ -16,12 +16,12 @@ const db = getFirestore();
 
 function weatherTags({ tempC, condition }: { tempC: number; condition: string }) {
   const cond = condition.toLowerCase();
-  const tags: string[] = [];
-  if (cond.includes("rain")) tags.push("soup", "comfort", "hot");
-  if (cond.includes("snow")) tags.push("soup", "hot", "comfort");
-  if (tempC >= 28) tags.push("cold", "salad", "drink");
-  if (tempC <= 10) tags.push("soup", "hot", "comfort");
-  return tags.length ? tags : ["balanced"];
+  const tags = new Set<string>();
+  if (cond.includes("rain")) ["soup", "comfort", "hot"].forEach((t) => tags.add(t));
+  if (cond.includes("snow")) ["soup", "hot", "comfort"].forEach((t) => tags.add(t));
+  if (tempC >= 28) ["cold", "salad", "drink"].forEach((t) => tags.add(t));
+  if (tempC <= 10) ["soup", "hot", "comfort"].forEach((t) => tags.add(t));
+  return tags.size ? Array.from(tags) : ["balanced"];
 }
 
 const DEFAULT_TIME_ZONE = process.env.LOCAL_TIME_ZONE || "America/New_York";
@@ -53,18 +53,26 @@ function currentMealKey(timeZone = DEFAULT_TIME_ZONE, date = new Date()) {
   if (h >= 5 && h < 10) return "breakfast";
   if (h >= 10 && h < 16) return "lunch";
   if (h >= 16 && h < 22) return "dinner";
-  return "nono";
+  return "off-campus";
 }
 
 function tagMenu(items: { name: string; category?: string; labels?: string[] }[]) {
-  return items.map((i) => {
-    const name = i.name.toLowerCase();
-    const cat = (i.category ?? "").toLowerCase();
-    const labels = (i.labels ?? []).map((l) => l.toLowerCase());
+  return items.map((raw) => {
+    let i = raw as any;
+    if (typeof raw === "string") {
+      try { i = JSON.parse(raw); } catch { i = { name: raw }; }
+    }
+    const name = String(i.name || "").toLowerCase();
+    const cat = String(i.category ?? "").toLowerCase();
+    const labels = Array.isArray(i.labels) ? i.labels.map((l: any) => String(l).toLowerCase()) : [];
     const tags = new Set<string>();
     if (name.includes("soup")) tags.add("soup");
     if (name.includes("salad")) tags.add("salad");
     if (name.includes("cold brew") || name.includes("iced") || name.includes("smoothie")) tags.add("drink").add("cold");
+    if (name.includes("burrito") || cat.includes("burrito")) tags.add("comfort").add("hot");
+    if (name.includes("taco") || cat.includes("taco")) tags.add("comfort");
+    if (name.includes("bowl") || cat.includes("bowl")) tags.add("comfort");
+    if (name.includes("queso") || labels.includes("cheese")) tags.add("comfort").add("hot");
     if (name.includes("grill") || name.includes("pasta") || name.includes("bbq") || name.includes("fried")) tags.add("comfort");
     if (cat.includes("beverage")) tags.add("drink");
     labels.forEach((l) => tags.add(l));
@@ -114,26 +122,26 @@ function humanReason({
 
   let mood: string;
   if (weatherCondition.includes("rain") && (hasSoup || hasComfort)) {
-    mood = "some good comfort pick for the rain are";
+    mood = "comfort pick for the rain";
   } else if (weatherCondition === "clear" && hasCold) {
-    mood = "some cool option for clear skies are";
+    mood = "cool option for clear skies";
   } else if (hasSoup || hasComfort) {
-    mood = "some comfort-friendly food are";
+    mood = "comfort-friendly pick";
   } else if (hasCold) {
-    mood = "some refreshing picks are";
+    mood = "refreshing pick";
   } else {
-    mood = "some solid option right now are";
+    mood = "solid option right now";
   }
 
   const parts: string[] = [];
-  if (tempF !== null) parts.push(`It's ${tempF}°F`);
+  if (tempF !== null) parts.push(`it's ${tempF}°F`);
   parts.push(mood);
   if (waitText) parts.push(`short wait (${waitText})`);
   if (distanceText) parts.push(distanceText);
 
   let reason = parts.join(", ");
   if (sampleItems && sampleItems.length) {
-    reason += `: ${sampleItems.slice(0, 2).join(", ")}`;
+    reason += `; try: ${sampleItems.slice(0, 2).join(", ")}`;
   }
   return reason;
 }
