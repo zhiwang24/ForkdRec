@@ -235,6 +235,8 @@ export default async function handler(req, res) {
 
     const enriched = [];
     for (const h of halls) {
+      const isOpen = h.status === "open" || h.isOpen === true;
+      if (!isOpen) continue;
       let menuItems: any[] = [];
       if (h.nutrisliceSlug) {
         try {
@@ -249,14 +251,20 @@ export default async function handler(req, res) {
         h.waitTime ??
         (typeof h.currentWaitMinutes === "number" ? `${h.currentWaitMinutes} min` : undefined);
       const { score, matchedTags, sampleItems } = scoreHall({ ...h, menuItems, waitTime: waitTimeText }, desired);
-      enriched.push({ hallId: h.id, name: h.name, score, matchedTags, sampleItems });
+      enriched.push({
+        hallId: h.id,
+        name: h.name,
+        score,
+        matchedTags,
+        sampleItems,
+        lat: h.lat ?? h.latitude,
+        lon: h.lon ?? h.longitude,
+      });
     }
 
 
-    let picks = enriched
-      .filter((p) => p.score > 0)
+    const picks = enriched
       .sort((a, b) => b.score - a.score)
-      .slice(0, 1)
       .map((p) => {
         const reason = humanReason({
           weatherCondition: weather.condition,
@@ -272,21 +280,10 @@ export default async function handler(req, res) {
           score: p.score,
           reason,
           sampleItems: p.sampleItems,
+          lat: p.lat,
+          lon: p.lon,
         };
       });
-
-    if (picks.length === 0) {
-      picks = enriched
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 1)
-        .map((p) => ({
-          hallId: p.hallId,
-          name: p.name,
-          score: p.score,
-          reason: "Top open option right now",
-          sampleItems: p.sampleItems,
-        }));
-    }
     await db.collection("recommendations").doc("global").set({
       updatedAt: Date.now(),
       weather,
