@@ -53,7 +53,7 @@ function currentMealKey(timeZone = DEFAULT_TIME_ZONE, date = new Date()) {
   if (h >= 5 && h < 10) return "breakfast";
   if (h >= 10 && h < 16) return "lunch";
   if (h >= 16 && h < 22) return "dinner";
-  return "off-campus";
+  return "breakfast";
 }
 
 function tagMenu(items: { name: string; category?: string; labels?: string[] }[]) {
