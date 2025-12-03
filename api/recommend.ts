@@ -236,7 +236,7 @@ export default async function handler(req, res) {
     const enriched = [];
     for (const h of halls) {
       const isOpen = h.status === "open" || h.isOpen === true;
-      //if (!isOpen) continue;
+      if (!isOpen) continue;
       let menuItems: any[] = [];
       if (h.nutrisliceSlug) {
         try {
