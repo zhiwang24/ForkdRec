@@ -288,7 +288,7 @@ export default async function handler(req, res) {
       updatedAt: Date.now(),
       weather,
       meal,
-      pick: picks[0] || null, // single top pick
+      pick: picks,
     });
 
 
